@@ -51,6 +51,7 @@ export namespace ACP {
     private config: ACPConfig
     private sdk: OpencodeClient
     private sessionManager
+    private eventAbortControllers = new Map<string, AbortController>()
 
     constructor(connection: AgentSideConnection, config: ACPConfig) {
       this.connection = connection
@@ -63,12 +64,22 @@ export namespace ACP {
       const sessionId = session.id
       const directory = session.cwd
 
+      // Abort existing event subscription for this directory to prevent duplicate messages
+      const existingController = this.eventAbortControllers.get(directory)
+      if (existingController) {
+        existingController.abort()
+      }
+
+      // Create new AbortController for this subscription
+      const abortController = new AbortController()
+      this.eventAbortControllers.set(directory, abortController)
+
       const options: PermissionOption[] = [
         { optionId: "once", kind: "allow_once", name: "Allow once" },
         { optionId: "always", kind: "allow_always", name: "Always allow" },
         { optionId: "reject", kind: "reject_once", name: "Reject" },
       ]
-      this.config.sdk.event.subscribe({ directory }).then(async (events) => {
+      this.config.sdk.event.subscribe({ directory }, { signal: abortController.signal }).then(async (events) => {
         for await (const event of events.stream) {
           switch (event.type) {
             case "permission.asked":
